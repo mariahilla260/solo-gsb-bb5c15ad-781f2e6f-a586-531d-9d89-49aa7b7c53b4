@@ -19,6 +19,7 @@ from .rebuild import build_rebuild_srt, rebuild_subtitles, validate_clips
 from .relayout import build_relayout_srt, relayout_subtitles
 from .retime import CalibPoint, build_srt, parse_timecode, retime_subtitles
 from .split import SWITCH_COST, build_split_srt, split_subtitles
+from .termcheck import check_terms, parse_glossary
 from .textnorm import normalize_text
 
 MAX_ITEMS = 2000          # 每侧条目数上限，防止 DP 规模过大导致请求过久
@@ -31,6 +32,7 @@ MAX_GAP_MS = 60_000       # 时间避让最小块间隔上限（毫秒）
 MIN_SHIFT_MS = 0          # 时间避让单块最大平移量下限（毫秒）
 MAX_SHIFT_MS = 3_600_000  # 时间避让单块最大平移量上限（毫秒）
 MAX_CLIPS = 2000          # 剪辑字幕重建素材片段数上限
+MAX_TERMS = 2000          # 双语术语核对词表条目数上限
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
@@ -526,6 +528,119 @@ def api_split_zh_srt(req: SplitRequest):
 def api_split_en_srt(req: SplitRequest):
     rows = _build_split_rows(req.srt)
     return _split_srt_response(rows, "en", "split.en.srt")
+
+
+class TermCheckRequest(BaseModel):
+    srt: str = Field(
+        default="", description="双语 SRT 字幕（每块正文须恰好两行）"
+    )
+    glossary: str = Field(
+        default="", description="术语词表：每行 英文术语<TAB>指定中文译法"
+    )
+
+
+def _build_termcheck_rows(srt_text: str, glossary_text: str):
+    if len(srt_text.encode("utf-8", errors="ignore")) > MAX_RAW_BYTES:
+        raise HTTPException(400, "SRT 超过 2 MB 大小限制")
+    if len(glossary_text.encode("utf-8", errors="ignore")) > MAX_RAW_BYTES:
+        raise HTTPException(400, "词表超过 2 MB 大小限制")
+    try:
+        subs = parse_srt(srt_text)
+    except ValueError as exc:
+        raise HTTPException(400, f"SRT 解析失败：{exc}") from exc
+    if not subs:
+        raise HTTPException(400, "SRT 内容为空，请粘贴字幕")
+    if len(subs) > MAX_ITEMS:
+        raise HTTPException(
+            400, f"字幕块数超过 {MAX_ITEMS} 的上限，请拆分后再核对"
+        )
+    try:
+        entries = parse_glossary(glossary_text)
+    except ValueError as exc:
+        raise HTTPException(400, f"词表无效：{exc}") from exc
+    if not entries:
+        raise HTTPException(400, "词表内容为空，请粘贴术语词表")
+    if len(entries) > MAX_TERMS:
+        raise HTTPException(
+            400, f"词表条目数超过 {MAX_TERMS} 的上限，请拆分后再核对"
+        )
+    try:
+        split_rows = split_subtitles(subs)
+    except ValueError as exc:
+        raise HTTPException(400, f"拆轨失败：{exc}") from exc
+    result = check_terms(subs, split_rows, entries)
+    summary = {
+        "total_blocks": len(split_rows),
+        "chains": result.chains,
+        "terms": len(entries),
+        "hits": result.hits,
+        "ok": sum(1 for r in result.rows if r.status == "ok"),
+        "missing": sum(1 for r in result.rows if r.status == "missing"),
+        "total_rows": len(result.rows),
+    }
+    return result.rows, summary
+
+
+def _termcheck_row_json(r) -> dict:
+    return {
+        "status": r.status,
+        "block_pos": r.block_pos,
+        "index": r.block_index,
+        "start_tc": r.start_tc,
+        "end_tc": r.end_tc,
+        "en_line": r.en_line,
+        "zh_line": r.zh_line,
+        "term": r.term,
+        "matched": r.matched,
+        "expected_zh": r.expected_zh,
+    }
+
+
+@app.post("/api/termcheck")
+def api_termcheck(req: TermCheckRequest):
+    rows, summary = _build_termcheck_rows(req.srt, req.glossary)
+    return {
+        "summary": summary,
+        "rows": [_termcheck_row_json(r) for r in rows],
+    }
+
+
+@app.post("/api/termcheck.csv")
+def api_termcheck_csv(req: TermCheckRequest):
+    rows, _ = _build_termcheck_rows(req.srt, req.glossary)
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(
+        [
+            "状态", "块号", "声明序号", "时间码入点", "时间码出点",
+            "英文轨原文", "中文轨原文", "英文术语", "命中文本", "应译词",
+        ]
+    )
+    status_label = {"ok": "合格", "missing": "缺译"}
+    for r in rows:
+        writer.writerow(
+            [
+                status_label[r.status],
+                r.block_pos,
+                r.block_index,
+                r.start_tc,
+                r.end_tc,
+                r.en_line,
+                r.zh_line,
+                r.term,
+                r.matched,
+                r.expected_zh,
+            ]
+        )
+    # UTF-8 BOM，保证 Excel 直接打开中文不乱码
+    data = "﻿".encode("utf-8") + buf.getvalue().encode("utf-8")
+    return Response(
+        content=data,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="termcheck.csv"'
+        },
+    )
 
 
 class DiffRequest(BaseModel):

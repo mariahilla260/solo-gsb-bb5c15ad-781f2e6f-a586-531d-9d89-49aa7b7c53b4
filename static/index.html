@@ -9,7 +9,7 @@
 <body>
 <header class="topbar">
   <h1>字幕校稿对齐</h1>
-  <p class="subtitle">逐行对白稿 × SRT 全局单调对齐 · SRT 时间轴重定时（校准点分段线性映射）· SRT 断行排版（宽度约束下枚举最优断点）· SRT 时间避让（重叠/过近字幕整体平移修整）· 双语 SRT 拆轨（每块两行拆分为中文轨/英文轨）· SRT 版本差异审校（新旧两版按块序最小代价对齐）· 剪辑字幕重建（按素材剪辑区间裁切平移、乱序重叠去重合并）</p>
+  <p class="subtitle">逐行对白稿 × SRT 全局单调对齐 · SRT 时间轴重定时（校准点分段线性映射）· SRT 断行排版（宽度约束下枚举最优断点）· SRT 时间避让（重叠/过近字幕整体平移修整）· 双语 SRT 拆轨（每块两行拆分为中文轨/英文轨）· 双语术语核对（英文轨词边界找术语、中文轨核对指定译法）· SRT 版本差异审校（新旧两版按块序最小代价对齐）· 剪辑字幕重建（按素材剪辑区间裁切平移、乱序重叠去重合并）</p>
 </header>
 
 <main>
@@ -19,6 +19,7 @@
     <button type="button" id="tabRelayout" class="tab" data-tab="relayout">SRT 断行排版</button>
     <button type="button" id="tabAvoid" class="tab" data-tab="avoid">SRT 时间避让</button>
     <button type="button" id="tabSplit" class="tab" data-tab="split">双语 SRT 拆轨</button>
+    <button type="button" id="tabTermcheck" class="tab" data-tab="termcheck">双语术语核对</button>
     <button type="button" id="tabDiff" class="tab" data-tab="diff">SRT 版本差异审校</button>
     <button type="button" id="tabRebuild" class="tab" data-tab="rebuild">剪辑字幕重建</button>
   </nav>
@@ -306,6 +307,75 @@
   </section>
   </div><!-- /viewSplit -->
 
+  <div id="viewTermcheck" class="hidden">
+  <section class="input-grid">
+    <div class="pane">
+      <div class="pane-head">
+        <label for="tcSrt">双语 SRT 字幕（每块正文须恰好两行：一行中文、一行英文）</label>
+        <button type="button" class="ghost" id="tcSampleSrt">填入示例</button>
+      </div>
+      <textarea id="tcSrt" spellcheck="false"
+        placeholder="粘贴标准 SRT&#10;1&#10;00:00:01,000 --> 00:00:03,000&#10;机器学习正在改变世界。&#10;Machine learning is changing the world."></textarea>
+    </div>
+    <div class="pane">
+      <div class="pane-head">
+        <label for="tcGlossary">术语词表（每行：英文术语 + TAB + 指定中文译法）</label>
+        <button type="button" class="ghost" id="tcSampleGlossary">填入示例</button>
+      </div>
+      <textarea id="tcGlossary" spellcheck="false"
+        placeholder="machine learning&#9;机器学习&#10;neural network&#9;神经网络"></textarea>
+    </div>
+  </section>
+
+  <section class="input-grid" style="margin-top:16px;">
+    <div class="pane pane-help">
+      <div class="pane-head"><label>核对规则</label></div>
+      <ul class="rules">
+        <li>复用双语拆轨：每块正文<b>恰好两行</b>，分出中文轨与英文轨；行数不符的块会<b>指出块号</b>并拒绝核对。</li>
+        <li>英文轨仅跨<b>相邻且间隔 0～500 毫秒</b>的块拼接（块间补一个空格），在拼接段内查找术语，不跨段匹配。</li>
+        <li>查找前对英文做归一化：<b>大小写折叠、全角转半角、连续空白折叠为单个空格</b>；按<b>英文词边界</b>匹配（命中两侧不允许是英文字母或数字）。</li>
+        <li>重叠候选<b>先选覆盖字符最多者</b>，再按出现位置、词表顺序；<b>同一英文字符只归属一次</b>。</li>
+        <li>命中覆盖的每个块：该块<b>中文轨去空白后包含指定译法</b>（同样去空白）即<b>合格</b>，否则标为<b>缺译</b>，给出块号、英文原文与应译词。</li>
+        <li>词表空项（缺 TAB、英文术语或译法为空）与<b>重复英文术语</b>（归一化后相同）会<b>指出行号</b>；任何错误都会清空旧结果。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="controls">
+    <button type="button" id="tcRunBtn" class="primary">开始核对</button>
+    <button type="button" id="tcClearBtn" class="ghost">清空</button>
+    <span id="tcStatus" class="status" role="status"></span>
+  </section>
+
+  <section id="tcSummary" class="summary hidden">
+    <span class="chip chip-ok">合格 <b id="tcCntOk">0</b></span>
+    <span class="chip chip-missing">缺译 <b id="tcCntMissing">0</b></span>
+    <span class="chip">命中 <b id="tcCntHits">0</b> 处</span>
+    <span class="chip">字幕块 <b id="tcCntBlocks">0</b></span>
+    <span class="chip">拼接段 <b id="tcCntChains">0</b></span>
+    <span class="chip">词表术语 <b id="tcCntTerms">0</b></span>
+    <button type="button" id="tcDownloadBtn" class="ghost">下载 CSV</button>
+  </section>
+
+  <section id="tcResultWrap" class="result-wrap hidden">
+    <table id="tcTable">
+      <thead>
+        <tr>
+          <th class="col-tk-status">状态</th>
+          <th class="col-rt-idx">块号</th>
+          <th class="col-rt-idx">原#</th>
+          <th class="col-tc">时间码</th>
+          <th class="col-tk-text">英文轨</th>
+          <th class="col-tk-text">中文轨</th>
+          <th class="col-tk-term">英文术语</th>
+          <th class="col-tk-term">应译词</th>
+        </tr>
+      </thead>
+      <tbody id="tcBody"></tbody>
+    </table>
+  </section>
+  </div><!-- /viewTermcheck -->
+
   <div id="viewDiff" class="hidden">
   <section class="input-grid">
     <div class="pane">
@@ -433,6 +503,7 @@
 <script src="/static/relayout.js"></script>
 <script src="/static/avoid.js"></script>
 <script src="/static/split.js"></script>
+<script src="/static/termcheck.js"></script>
 <script src="/static/diff.js"></script>
 <script src="/static/rebuild.js"></script>
 </body>

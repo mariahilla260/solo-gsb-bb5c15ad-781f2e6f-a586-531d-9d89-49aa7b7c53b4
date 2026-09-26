@@ -289,6 +289,19 @@ tr.row-en-top td:first-child { border-left: 4px solid var(--single-border); }
 .summary .dl-btns { margin-left: auto; display: flex; gap: 10px; }
 .summary .dl-btns .ghost { margin-left: 0; }
 
+/* 双语术语核对 */
+.chip-ok { background: var(--match-bg); border-color: var(--match-border); }
+.chip-missing { background: var(--manual-bg); border-color: var(--manual-border); }
+.col-tk-status { width: 76px; }
+.col-tk-text { min-width: 200px; }
+.col-tk-term { min-width: 130px; }
+.badge-ok { background: var(--match-border); color: #fff; }
+.badge-missing { background: var(--manual-border); color: #fff; }
+tr.row-ok { background: var(--match-bg); }
+tr.row-ok td:first-child { border-left: 4px solid var(--match-border); }
+tr.row-missing { background: var(--manual-bg); }
+tr.row-missing td:first-child { border-left: 4px solid var(--manual-border); }
+
 /* SRT 版本差异审校 */
 .chip-time-only { background: var(--time-only-bg); border-color: var(--time-only-border); }
 .chip-text-changed { background: var(--text-changed-bg); border-color: var(--text-changed-border); }

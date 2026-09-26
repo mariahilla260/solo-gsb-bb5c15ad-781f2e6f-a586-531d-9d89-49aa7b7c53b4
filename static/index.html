@@ -9,7 +9,7 @@
 <body>
 <header class="topbar">
   <h1>字幕校稿对齐</h1>
-  <p class="subtitle">逐行对白稿 × SRT 全局单调对齐 · SRT 时间轴重定时（校准点分段线性映射）· SRT 断行排版（宽度约束下枚举最优断点）· SRT 时间避让（重叠/过近字幕整体平移修整）· 双语 SRT 拆轨（每块两行拆分为中文轨/英文轨）· SRT 版本差异审校（新旧两版按块序最小代价对齐）· 剪辑字幕重建（按素材剪辑区间裁切平移、乱序重叠去重合并）</p>
+  <p class="subtitle">逐行对白稿 × SRT 全局单调对齐 · SRT 时间轴重定时（校准点分段线性映射）· SRT 断行排版（宽度约束下枚举最优断点）· SRT 时间避让（重叠/过近字幕整体平移修整）· 双语 SRT 拆轨（每块两行拆分为中文轨/英文轨）· 双语术语核对（英文词边界命中术语、核对中文轨指定译法）· SRT 版本差异审校（新旧两版按块序最小代价对齐）· 剪辑字幕重建（按素材剪辑区间裁切平移、乱序重叠去重合并）</p>
 </header>
 
 <main>
@@ -19,6 +19,7 @@
     <button type="button" id="tabRelayout" class="tab" data-tab="relayout">SRT 断行排版</button>
     <button type="button" id="tabAvoid" class="tab" data-tab="avoid">SRT 时间避让</button>
     <button type="button" id="tabSplit" class="tab" data-tab="split">双语 SRT 拆轨</button>
+    <button type="button" id="tabTerm" class="tab" data-tab="term">双语术语核对</button>
     <button type="button" id="tabDiff" class="tab" data-tab="diff">SRT 版本差异审校</button>
     <button type="button" id="tabRebuild" class="tab" data-tab="rebuild">剪辑字幕重建</button>
   </nav>
@@ -306,6 +307,72 @@
   </section>
   </div><!-- /viewSplit -->
 
+  <div id="viewTerm" class="hidden">
+  <section class="input-grid">
+    <div class="pane">
+      <div class="pane-head">
+        <label for="tmSrt">双语 SRT 字幕（每块正文须恰好两行：一行中文、一行英文）</label>
+        <button type="button" class="ghost" id="tmSample">填入示例</button>
+      </div>
+      <textarea id="tmSrt" spellcheck="false"
+        placeholder="粘贴标准 SRT&#10;1&#10;00:00:01,000 --> 00:00:03,000&#10;你好，世界！&#10;Hello, world!"></textarea>
+    </div>
+    <div class="pane">
+      <div class="pane-head">
+        <label for="tmGlossary">术语词表（每行：英文术语&#9;TAB&#9;指定中文译法）</label>
+        <button type="button" class="ghost" id="tmSampleGlossary">填入示例词表</button>
+      </div>
+      <textarea id="tmGlossary" spellcheck="false"
+        placeholder="每行一条，英文与中文之间用 TAB 分隔：&#10;artificial intelligence&#9;人工智能&#10;GPU&#9;图形处理器"></textarea>
+    </div>
+  </section>
+
+  <section class="input-grid" style="margin-top:16px;">
+    <div class="pane pane-help">
+      <div class="pane-head"><label>核对规则</label></div>
+      <ul class="rules">
+        <li>复用同一解析器与<b>双语拆轨</b>：每块正文<b>须恰好两行</b>，非双行块指出块号并清空旧结果。</li>
+        <li>英文轨仅在<b>相邻且间隔 0～500 毫秒</b>的块之间拼接为同一条待查文本；间隔更大或重叠处断链，术语不跨链命中。</li>
+        <li>匹配前做<b>大小写、全半角与空白归一</b>（NFKC + 小写折叠 + 连续空白折叠），按<b>英文词边界</b>找术语。</li>
+        <li>重叠候选先取<b>覆盖字符最多</b>者，再按<b>出现位置</b>靠前、再按<b>词表顺序</b>取先者；同一英文字符只归属一次。</li>
+        <li>命中覆盖到的每个块：中文轨<b>去全部空白后包含指定译法</b>即<b>合格</b>，否则标出<b>块号、英文原文与应译词</b>。</li>
+        <li>词表<b>空项、缺少 TAB 或英文术语重复</b>（归一化后）会指出所在行并清空旧结果；可下载 UTF-8 CSV。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="controls">
+    <button type="button" id="tmRunBtn" class="primary">开始核对</button>
+    <button type="button" id="tmClearBtn" class="ghost">清空</button>
+    <span id="tmStatus" class="status" role="status"></span>
+  </section>
+
+  <section id="tmSummary" class="summary hidden">
+    <span class="chip chip-match">合格 <b id="tmCntOk">0</b></span>
+    <span class="chip chip-missing-script">缺译 <b id="tmCntMissing">0</b></span>
+    <span class="chip">命中核对 <b id="tmCntTotal">0</b></span>
+    <span class="chip">命中术语 <b id="tmCntTerms">0</b></span>
+    <button type="button" id="tmDownloadBtn" class="ghost">下载 CSV</button>
+  </section>
+
+  <section id="tmResultWrap" class="result-wrap hidden">
+    <table id="tmTable">
+      <thead>
+        <tr>
+          <th class="col-status">状态</th>
+          <th class="col-rt-idx">块号</th>
+          <th class="col-tc">时间码</th>
+          <th class="col-tm-term">英文术语</th>
+          <th class="col-tm-trans">应译词</th>
+          <th class="col-tm-en">英文原文</th>
+          <th class="col-tm-zh">中文原文</th>
+        </tr>
+      </thead>
+      <tbody id="tmBody"></tbody>
+    </table>
+  </section>
+  </div><!-- /viewTerm -->
+
   <div id="viewDiff" class="hidden">
   <section class="input-grid">
     <div class="pane">
@@ -433,6 +500,7 @@
 <script src="/static/relayout.js"></script>
 <script src="/static/avoid.js"></script>
 <script src="/static/split.js"></script>
+<script src="/static/termcheck.js"></script>
 <script src="/static/diff.js"></script>
 <script src="/static/rebuild.js"></script>
 </body>

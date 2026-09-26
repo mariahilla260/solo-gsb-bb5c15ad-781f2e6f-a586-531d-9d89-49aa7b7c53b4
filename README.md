@@ -31,6 +31,15 @@
 正文行内容、从 1 重编号**的中文轨 / 英文轨 SRT；正文行数不符的块会指出块号并
 拒绝导出。
 
+在拆轨之上另设 **双语术语核对**工具：粘贴每块恰好两行的双语 SRT 与逐行
+「英文术语<TAB>指定中文译法」词表，复用同一解析器与双语拆轨。英文轨仅在
+**相邻且间隔 0～500 毫秒**的块之间拼接为待查文本（间隔更大或重叠处断链），
+经**大小写、全半角、空白归一**后按**英文词边界**查找术语；重叠候选先选
+**覆盖字符最多**者，再按出现位置与词表顺序取先，**同一英文字符只归属一次**。
+命中覆盖到的每个块，其中文轨**去空白后包含指定译法**即为**合格**，否则标出
+**块号、英文原文与应译词**。页面预览合格/缺译结果并可下载 UTF-8 CSV；
+词表空项、重复英文术语或非双行块均指出位置并清空旧结果。
+
 另有 **SRT 版本差异审校**工具：输入旧版与新版 SRT，按块序做**全局最小代价**
 对齐，允许 1:1、1:2（拆分）、2:1（合并）与单侧缺项（增删）；候选先合并正文
 再做同样的文本归一化，以归一化编辑距离计分，拆并另加 0.1、增删各计 0.45，
@@ -277,6 +286,59 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ---
 
+## 双语术语核对
+
+启动后浏览器打开 **http://localhost:8000**（Docker Compose 一键启动见上文，
+端口可改），页面顶部切换到「**双语术语核对**」选项卡，可在每块恰好两行的
+双语字幕上核对英文术语是否采用指定中文译法：
+
+1. 左侧文本框粘贴**双语 SRT**（与「双语 SRT 拆轨」同一解析器与拆轨规则，
+   **每个字幕块正文必须恰好两行**：一行中文、一行英文）。
+2. 右侧文本框粘贴**术语词表**，每行一条，格式为
+   **`英文术语<TAB>指定中文译法`**（英文与中文之间是一个真正的 TAB），例如：
+
+   ```
+   artificial intelligence	人工智能
+   GPU	图形处理器
+   ```
+
+3. 点 **开始核对**，下方表格逐块展示命中结果：**状态**（合格 / 缺译）、
+   **块号**、时间码、**英文术语**、**应译词**、该块**英文原文**与**中文原文**。
+   汇总区显示合格数、缺译数、命中核对条数与命中术语数。
+4. 点 **下载 CSV** 导出全部命中结果（UTF-8 带 BOM，Excel 直接打开不乱码）。
+
+### 拼接与匹配规则
+
+- 先复用**双语拆轨**确定每块的中文行 / 英文行（非恰好两行的块指出块号并
+  拒绝预览/导出）。
+- 英文轨仅在**相邻且间隔 0～500 毫秒**的块之间拼接为同一条待查文本链：
+  间隔按「下一块入点 − 上一块出点」计算，**间隔超过 500 毫秒或为负
+ （时间重叠）处断链**，术语不跨链命中；链内块之间以单个空格相接。
+- 匹配前对英文做归一化：**NFKC**（全角→半角等）+ **小写折叠**（casefold）
+  + 连续空白折叠为单个空格；再按**英文词边界**（`\w` 边界）查找术语，
+  因此 `GPUs`、`xGPU`、`GPU2` 不会命中术语 `GPU`。
+- 重叠候选的取舍顺序为：**覆盖字符最多 → 出现位置更靠前 → 词表顺序在先**；
+  候选一旦选中，与已归属字符区间重叠的其余候选丢弃，保证
+  **同一英文字符只归属一次**（如词表同时含 `learning` 与
+  `machine learning` 时取后者）。
+- 一次命中可跨多个拼接块（如 `artificial` 在块 N、`intelligence` 在块 N+1），
+  命中区间**覆盖到的每个块分别核对**：该块中文轨**去除全部 Unicode 空白后
+  包含指定译法**（指定译法同样去空白）即**合格**，否则记为**缺译**，
+  结果行给出**块号、该块英文原文与应译词**。
+
+### 词表与输入校验（拒绝并清空旧结果）
+
+以下任一情况均返回 **400**，页面状态栏指出位置并清空已有预览/汇总：
+
+- **空项**：整行只有空白、缺少 TAB 分隔，或 TAB 任一侧为空；
+- **重复英文术语**：归一化（NFKC + 小写折叠）后相同视为重复，
+  信息给出重复行与首次出现行；
+- **非双行块**：SRT 块正文不是恰好两行（由拆轨环节指出块号）。
+
+错误信息示例：`第 2 行缺少 TAB 分隔：每项须为「英文术语<TAB>指定中文译法」；第 4 行英文术语「gpu」与第 2 行重复`。
+
+---
+
 ## SRT 版本差异审校
 
 页面顶部切换到「**SRT 版本差异审校**」选项卡，可比较同一字幕的新旧两版：
@@ -429,6 +491,8 @@ curl -s -X POST http://localhost:8000/api/align \
 | POST | `/api/split` | 入参 `{"srt"}`，返回双语拆轨预览 `summary` 与逐块 `rows` |
 | POST | `/api/split.zh.srt` | 同入参，直接下载中文轨 SRT（保留原时间码与正文行、重新编号） |
 | POST | `/api/split.en.srt` | 同入参，直接下载英文轨 SRT（保留原时间码与正文行、重新编号） |
+| POST | `/api/termcheck` | 入参 `{"srt","glossary"}`，返回双语术语核对 `summary` 与逐块 `rows` |
+| POST | `/api/termcheck.csv` | 同入参，直接下载术语核对结果 CSV（UTF-8 带 BOM） |
 | POST | `/api/diff` | 入参 `{"old_srt","new_srt"}`，返回版本差异 `summary` 与逐行 `rows` |
 | POST | `/api/diff.csv` | 同入参，直接下载差异结果 CSV（UTF-8 带 BOM） |
 | POST | `/api/rebuild` | 入参 `{"srt","clips"}`，返回剪辑字幕重建预览 `summary` 与逐条 `rows` |
@@ -505,6 +569,23 @@ curl -s -X POST http://localhost:8000/api/split \
   -d '{"srt":"1\n00:00:01,000 --> 00:00:03,000\n你好，世界！\nHello, world!\n"}'
 ```
 
+双语术语核对接口 `/api/termcheck` 与 `/api/termcheck.csv` 的入参均为
+`{"srt": "...", "glossary": "..."}`：`srt` 为每块恰好两行的双语 SRT，
+`glossary` 为逐行 `英文术语<TAB>指定中文译法` 词表。预览 `rows` 每行字段：
+`status`（`ok` 合格 / `missing` 缺译）、`block`（命中覆盖块的解析序位）、
+`index`（声明序号）、`start_tc` / `end_tc`、`term`（英文术语原文）、
+`translation`（指定中文译法）、`en_line` / `zh_line`（该块英文/中文轨原文）；
+`summary` 含 `total`（命中核对条数）、`ok`、`missing`、`terms`
+（命中的不同术语数）。词表空项、缺 TAB、重复英文术语（归一化后）或非双行块
+返回 400 并指出位置。
+
+```bash
+curl -s -X POST http://localhost:8000/api/termcheck \
+  -H 'Content-Type: application/json' \
+  -d $'{"srt":"1\\n00:00:01,000 --> 00:00:02,000\\n人工智能改变行业。\\nArtificial intelligence changes the industry.\\n",
+       "glossary":"artificial intelligence\\t人工智能"}'
+```
+
 版本差异接口 `/api/diff` 与 `/api/diff.csv` 的入参均为
 `{"old_srt": "...", "new_srt": "..."}`（两版 SRT 全文）。预览 `rows` 每行字段：
 `status`（`unchanged` 未变 / `time_only` 仅改时 / `text_changed` 文字改动 /
@@ -557,24 +638,26 @@ curl -s -X POST http://localhost:8000/api/align \
 ```
 .
 ├── app/
-│   ├── main.py        # FastAPI：/api/align、/api/export.csv、/api/retime(.srt)、/api/relayout(.srt)、/api/avoid(.srt)、/api/split(.zh/.en.srt)、/api/diff(.csv)、/api/rebuild(.srt)、静态页托管
+│   ├── main.py        # FastAPI：/api/align、/api/export.csv、/api/retime(.srt)、/api/relayout(.srt)、/api/avoid(.srt)、/api/split(.zh/.en.srt)、/api/termcheck(.csv)、/api/diff(.csv)、/api/rebuild(.srt)、静态页托管
 │   ├── alignment.py   # 全局单调对齐 DP（numpy 实现 + 纯 Python 回退）
 │   ├── parsers.py     # 逐行对白稿与 SRT 解析（保留时间码与正文行）
 │   ├── retime.py      # SRT 时间轴重定时：校准点分段线性映射与导出校验
 │   ├── relayout.py    # SRT 断行排版：宽度计量、合法断点枚举与最优选点、SRT 导出
 │   ├── avoid.py       # SRT 时间避让：最小最大平移量求解 + 带盒 L1 保序回归就近落位、SRT 导出
 │   ├── split.py       # 双语 SRT 拆轨：错配计分、全段最小总代价 DP（平局逐块中文在上）、单轨 SRT 导出
+│   ├── termcheck.py   # 双语术语核对：词表解析、英文归一化与词边界匹配、0~500ms 相邻块拼接、覆盖最长优先去重、中文轨译法核对
 │   ├── rebuild.py     # 剪辑字幕重建：素材区间裁切平移、覆盖计数去重、端点切分/同集合合并、SRT 导出
 │   ├── diffalign.py   # SRT 版本差异：1:1/1:2/2:1/缺项全局最小代价 DP（字典序键：总分→入出点偏差→拆并次数）
 │   └── textnorm.py    # 归一化与归一化字符编辑距离
 ├── static/
-│   ├── index.html     # 页面结构（对齐 / 重定时 / 断行排版 / 时间避让 / 双语拆轨 / 版本差异 / 剪辑重建七个选项卡）
+│   ├── index.html     # 页面结构（对齐 / 重定时 / 断行排版 / 时间避让 / 双语拆轨 / 双语术语核对 / 版本差异 / 剪辑重建八个选项卡）
 │   ├── style.css
 │   ├── app.js         # 对齐页面前端交互（fetch 调接口、渲染、下载）
 │   ├── retime.js      # 重定时页面前端交互（含各页签切换）
 │   ├── relayout.js    # 断行排版页面前端交互
 │   ├── avoid.js       # 时间避让页面前端交互
 │   ├── split.js       # 双语拆轨页面前端交互
+│   ├── termcheck.js   # 双语术语核对页面前端交互
 │   ├── diff.js        # 版本差异审校页面前端交互
 │   └── rebuild.js     # 剪辑字幕重建页面前端交互
 ├── tests/             # 单元 + 接口测试

@@ -321,6 +321,15 @@ tr.row-added td:first-child { border-left: 4px solid var(--added-border); }
 tr.row-deleted { background: var(--deleted-bg); }
 tr.row-deleted td:first-child { border-left: 4px solid var(--deleted-border); }
 
+/* 双语术语核对 */
+.col-tm-term { width: 150px; }
+.col-tm-trans { width: 130px; }
+.col-tm-en, .col-tm-zh { min-width: 200px; }
+tr.row-term-ok { background: var(--match-bg); }
+tr.row-term-ok td:first-child { border-left: 4px solid var(--match-border); }
+tr.row-term-missing { background: var(--missing-script-bg); }
+tr.row-term-missing td:first-child { border-left: 4px solid var(--missing-script-border); }
+
 .hidden { display: none; }
 
 /* 剪辑字幕重建 */
